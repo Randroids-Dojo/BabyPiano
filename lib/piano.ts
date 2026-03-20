@@ -1,5 +1,5 @@
 export type Instrument = 'grand-piano' | 'toy-xylophone'
-export type Mode = 'free-play' | 'learn'
+export type Mode = 'free-play' | 'learn' | 'quiz'
 
 export type Song = {
   id: string
