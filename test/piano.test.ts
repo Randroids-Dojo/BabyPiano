@@ -9,14 +9,14 @@ describe('piano domain data', () => {
     expect(names).toContain('Mary Had a Little Lamb')
   })
 
-  it('normalizes octave and accidental symbols in key names', () => {
+  it('normalizes octave numbers but preserves accidentals in key names', () => {
     expect(plainNote('C4')).toBe('C')
-    expect(plainNote('F#4')).toBe('F')
+    expect(plainNote('F#4')).toBe('F#')
   })
 
   it('validates learn mode note matching against plain note names', () => {
     expect(isCorrectLearnNote('C4', 'C')).toBe(true)
-    expect(isCorrectLearnNote('G#4', 'G')).toBe(true)
+    expect(isCorrectLearnNote('G#4', 'G')).toBe(false)
     expect(isCorrectLearnNote('D4', 'C')).toBe(false)
   })
 })

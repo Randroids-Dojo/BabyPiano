@@ -36,7 +36,7 @@ export const SONGS: Song[] = [
   },
 ]
 
-export const plainNote = (note: string) => note.replace(/[0-9#]/g, '')
+export const plainNote = (note: string) => note.replace(/[0-9]/g, '')
 
 export const isCorrectLearnNote = (note: string, expected: string) => {
   return plainNote(note) === expected
