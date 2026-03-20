@@ -51,13 +51,16 @@ export default function HomePage() {
   const [songComplete, setSongComplete] = useState(false)
   const [activeNotes, setActiveNotes] = useState<Set<string>>(new Set())
   const [portrait, setPortrait] = useState(false)
+  const [wrongNotes, setWrongNotes] = useState<Set<string>>(new Set())
 
   const audioContextRef = useRef<AudioContext | null>(null)
   const voicesRef = useRef<Map<string, PlayingVoice[]>>(new Map())
   const pointerMapRef = useRef<Map<number, string>>(new Map())
+  const wrongTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   const song = useMemo(() => SONGS.find((item) => item.id === songId) ?? SONGS[0], [songId])
-  const nextRequired = mode === 'learn' && !songComplete ? song.notes[stepIndex] : null
+  const isLearning = (mode === 'learn' || mode === 'quiz') && !songComplete
+  const nextRequired = isLearning ? song.notes[stepIndex] : null
 
   useEffect(() => {
     const media = window.matchMedia('(orientation: portrait)')
@@ -73,6 +76,22 @@ export default function HomePage() {
     }
     return audioContextRef.current
   }, [])
+
+  const playErrorSfx = useCallback(() => {
+    const ctx = getAudioContext()
+    const now = ctx.currentTime
+    const gain = ctx.createGain()
+    const osc = ctx.createOscillator()
+    osc.type = 'square'
+    osc.frequency.setValueAtTime(150, now)
+    osc.frequency.exponentialRampToValueAtTime(80, now + 0.15)
+    gain.gain.setValueAtTime(0.18, now)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2)
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(now)
+    osc.stop(now + 0.21)
+  }, [getAudioContext])
 
   const playNote = useCallback((note: string) => {
     const ctx = getAudioContext()
@@ -130,6 +149,21 @@ export default function HomePage() {
     voicesRef.current.set(note, rest)
   }, [])
 
+  const flashWrong = useCallback((note: string) => {
+    const existing = wrongTimersRef.current.get(note)
+    if (existing) clearTimeout(existing)
+    setWrongNotes((prev) => new Set(prev).add(note))
+    const timer = setTimeout(() => {
+      setWrongNotes((prev) => {
+        const next = new Set(prev)
+        next.delete(note)
+        return next
+      })
+      wrongTimersRef.current.delete(note)
+    }, 400)
+    wrongTimersRef.current.set(note, timer)
+  }, [])
+
   const handleNoteDown = useCallback((note: string, pointerId: number) => {
     void getAudioContext().resume()
 
@@ -140,20 +174,34 @@ export default function HomePage() {
 
     pointerMapRef.current.set(pointerId, note)
     setActiveNotes((prev) => new Set(prev).add(note))
-    playNote(note)
 
-    if (mode === 'learn' && nextRequired) {
-      const expected = nextRequired
-      if (isCorrectLearnNote(note, expected)) {
+    if (mode === 'quiz' && nextRequired) {
+      if (isCorrectLearnNote(note, nextRequired)) {
+        playNote(note)
         const next = stepIndex + 1
         if (next >= song.notes.length) {
           setSongComplete(true)
         } else {
           setStepIndex(next)
         }
+      } else {
+        playErrorSfx()
+        flashWrong(note)
+      }
+    } else {
+      playNote(note)
+      if (mode === 'learn' && nextRequired) {
+        if (isCorrectLearnNote(note, nextRequired)) {
+          const next = stepIndex + 1
+          if (next >= song.notes.length) {
+            setSongComplete(true)
+          } else {
+            setStepIndex(next)
+          }
+        }
       }
     }
-  }, [getAudioContext, mode, nextRequired, playNote, song.notes.length, stepIndex, stopNote])
+  }, [getAudioContext, mode, nextRequired, playNote, playErrorSfx, flashWrong, song.notes.length, stepIndex, stopNote])
 
   const handlePointerRelease = useCallback((pointerId: number) => {
     const note = pointerMapRef.current.get(pointerId)
@@ -171,11 +219,28 @@ export default function HomePage() {
   const restartSong = useCallback(() => {
     setStepIndex(0)
     setSongComplete(false)
+    setWrongNotes(new Set())
   }, [])
 
   useEffect(() => {
     restartSong()
   }, [songId, restartSong])
+
+  const showSongControls = mode === 'learn' || mode === 'quiz'
+
+  const getWhiteKeyBg = (note: string, active: boolean) => {
+    if (wrongNotes.has(note)) return '#fca5a5'
+    if (active) return '#fdba74'
+    if (mode === 'learn' && nextRequired === plainNote(note)) return '#bbf7d0'
+    return '#f8fafc'
+  }
+
+  const getBlackKeyBg = (note: string, active: boolean) => {
+    if (wrongNotes.has(note)) return '#ef4444'
+    if (active) return '#fb7185'
+    if (mode === 'learn' && nextRequired === plainNote(note)) return '#22c55e'
+    return '#111827'
+  }
 
   return (
     <main style={{ minHeight: '100dvh', background: '#0f172a', color: '#e2e8f0', padding: 12 }}>
@@ -195,7 +260,8 @@ export default function HomePage() {
             </select>
             <button onClick={() => setMode('free-play')} style={{ fontWeight: mode === 'free-play' ? 700 : 400 }}>Free Play</button>
             <button onClick={() => setMode('learn')} style={{ fontWeight: mode === 'learn' ? 700 : 400 }}>Learn Mode</button>
-            {mode === 'learn' && (
+            <button onClick={() => setMode('quiz')} style={{ fontWeight: mode === 'quiz' ? 700 : 400 }}>Quiz Mode</button>
+            {showSongControls && (
               <>
                 <select value={songId} onChange={(e) => setSongId(e.target.value)}>
                   {SONGS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
@@ -205,11 +271,13 @@ export default function HomePage() {
             )}
           </div>
 
-          {mode === 'learn' && (
+          {showSongControls && (
             <div style={{ fontSize: 14 }}>
               {songComplete
                 ? `Great job! You completed ${song.label}.`
-                : `Next key: ${nextRequired}`}
+                : mode === 'quiz'
+                  ? `Find the key: ${nextRequired}`
+                  : `Next key: ${nextRequired}`}
             </div>
           )}
 
@@ -217,7 +285,6 @@ export default function HomePage() {
             <div style={{ position: 'absolute', inset: 0, display: 'flex', borderRadius: 10, overflow: 'hidden', border: '2px solid #cbd5e1' }}>
               {KEYS.filter((key) => key.type === 'white').map((key) => {
                 const active = activeNotes.has(key.note)
-                const required = nextRequired === plainNote(key.note)
                 return (
                   <button
                     key={key.note}
@@ -230,11 +297,12 @@ export default function HomePage() {
                     style={{
                       flex: 1,
                       border: '1px solid #94a3b8',
-                      background: active ? '#fdba74' : required ? '#bbf7d0' : '#f8fafc',
+                      background: getWhiteKeyBg(key.note, active),
                       color: '#0f172a',
+                      transition: wrongNotes.has(key.note) ? 'none' : 'background 0.3s',
                     }}
                   >
-                    {plainNote(key.note)}
+                    {mode !== 'quiz' ? plainNote(key.note) : ''}
                   </button>
                 )
               })}
@@ -242,7 +310,6 @@ export default function HomePage() {
 
             {KEYS.filter((key) => key.type === 'black').map((key) => {
               const active = activeNotes.has(key.note)
-              const required = nextRequired === plainNote(key.note)
               return (
                 <button
                   key={key.note}
@@ -262,11 +329,12 @@ export default function HomePage() {
                     border: '1px solid #0f172a',
                     borderBottomLeftRadius: 8,
                     borderBottomRightRadius: 8,
-                    background: active ? '#fb7185' : required ? '#22c55e' : '#111827',
+                    background: getBlackKeyBg(key.note, active),
                     color: '#f8fafc',
+                    transition: wrongNotes.has(key.note) ? 'none' : 'background 0.3s',
                   }}
                 >
-                  {plainNote(key.note)}
+                  {mode !== 'quiz' ? plainNote(key.note) : ''}
                 </button>
               )
             })}

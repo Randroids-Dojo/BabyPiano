@@ -1,5 +1,5 @@
 export type Instrument = 'grand-piano' | 'toy-xylophone'
-export type Mode = 'free-play' | 'learn'
+export type Mode = 'free-play' | 'learn' | 'quiz'
 
 export type Song = {
   id: string
@@ -36,7 +36,7 @@ export const SONGS: Song[] = [
   },
 ]
 
-export const plainNote = (note: string) => note.replace(/[0-9#]/g, '')
+export const plainNote = (note: string) => note.replace(/[0-9]/g, '')
 
 export const isCorrectLearnNote = (note: string, expected: string) => {
   return plainNote(note) === expected
