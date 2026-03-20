@@ -13,16 +13,16 @@ type PlayingVoice = {
 
 const KEYS = [
   { note: 'C4', type: 'white', left: 0 },
-  { note: 'C#4', type: 'black', left: 7.2 },
+  { note: 'C#4', type: 'black', left: 14.3 },
   { note: 'D4', type: 'white', left: 14.3 },
-  { note: 'D#4', type: 'black', left: 21.5 },
+  { note: 'D#4', type: 'black', left: 28.6 },
   { note: 'E4', type: 'white', left: 28.6 },
   { note: 'F4', type: 'white', left: 42.9 },
-  { note: 'F#4', type: 'black', left: 50 },
+  { note: 'F#4', type: 'black', left: 57.1 },
   { note: 'G4', type: 'white', left: 57.2 },
-  { note: 'G#4', type: 'black', left: 64.4 },
+  { note: 'G#4', type: 'black', left: 71.4 },
   { note: 'A4', type: 'white', left: 71.5 },
-  { note: 'A#4', type: 'black', left: 78.7 },
+  { note: 'A#4', type: 'black', left: 85.7 },
   { note: 'B4', type: 'white', left: 85.8 },
 ] as const
 
