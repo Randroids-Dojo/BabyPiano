@@ -52,11 +52,13 @@ export default function HomePage() {
   const [activeNotes, setActiveNotes] = useState<Set<string>>(new Set())
   const [portrait, setPortrait] = useState(false)
   const [wrongNotes, setWrongNotes] = useState<Set<string>>(new Set())
+  const [uiHidden, setUiHidden] = useState(false)
 
   const audioContextRef = useRef<AudioContext | null>(null)
   const voicesRef = useRef<Map<string, PlayingVoice[]>>(new Map())
   const pointerMapRef = useRef<Map<number, string>>(new Map())
   const wrongTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const song = useMemo(() => SONGS.find((item) => item.id === songId) ?? SONGS[0], [songId])
   const isLearning = (mode === 'learn' || mode === 'quiz') && !songComplete
@@ -69,6 +71,19 @@ export default function HomePage() {
     media.addEventListener('change', update)
     return () => media.removeEventListener('change', update)
   }, [])
+
+  const resetIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
+    setUiHidden(false)
+    idleTimerRef.current = setTimeout(() => setUiHidden(true), 5000)
+  }, [])
+
+  useEffect(() => {
+    resetIdleTimer()
+    return () => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
+    }
+  }, [resetIdleTimer])
 
   const getAudioContext = useCallback(() => {
     if (!audioContextRef.current) {
@@ -165,6 +180,7 @@ export default function HomePage() {
   }, [])
 
   const handleNoteDown = useCallback((note: string, pointerId: number) => {
+    resetIdleTimer()
     void getAudioContext().resume()
 
     const existing = pointerMapRef.current.get(pointerId)
@@ -201,7 +217,7 @@ export default function HomePage() {
         }
       }
     }
-  }, [getAudioContext, mode, nextRequired, playNote, playErrorSfx, flashWrong, song.notes.length, stepIndex, stopNote])
+  }, [resetIdleTimer, getAudioContext, mode, nextRequired, playNote, playErrorSfx, flashWrong, song.notes.length, stepIndex, stopNote])
 
   const handlePointerRelease = useCallback((pointerId: number) => {
     const note = pointerMapRef.current.get(pointerId)
@@ -243,7 +259,16 @@ export default function HomePage() {
   }
 
   return (
-    <main style={{ minHeight: '100dvh', background: '#0f172a', color: '#e2e8f0', padding: 12 }}>
+    <main
+      style={{ minHeight: '100dvh', background: '#0f172a', color: '#e2e8f0', padding: uiHidden ? 0 : 12 }}
+      onPointerDown={uiHidden ? (e) => {
+        // If tapping outside the keyboard area, show UI
+        const target = e.target as HTMLElement
+        if (!target.closest('[data-piano-keyboard]')) {
+          resetIdleTimer()
+        }
+      } : undefined}
+    >
       {versionStale && <UpdateBanner />}
       {portrait ? (
         <div style={{ display: 'grid', placeItems: 'center', minHeight: '90dvh', textAlign: 'center' }}>
@@ -251,38 +276,42 @@ export default function HomePage() {
           <p>Baby Piano is optimized for landscape on mobile and tablets.</p>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 960, margin: '0 auto' }}>
-          <h1 style={{ margin: 0, fontSize: 24 }}>Baby Piano</h1>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <select value={instrument} onChange={(e) => setInstrument(e.target.value as Instrument)}>
-              <option value="grand-piano">Grand Piano</option>
-              <option value="toy-xylophone">Toy Xylophone</option>
-            </select>
-            <button onClick={() => setMode('free-play')} style={{ fontWeight: mode === 'free-play' ? 700 : 400 }}>Free Play</button>
-            <button onClick={() => setMode('learn')} style={{ fontWeight: mode === 'learn' ? 700 : 400 }}>Learn Mode</button>
-            <button onClick={() => setMode('quiz')} style={{ fontWeight: mode === 'quiz' ? 700 : 400 }}>Quiz Mode</button>
-            {showSongControls && (
-              <>
-                <select value={songId} onChange={(e) => setSongId(e.target.value)}>
-                  {SONGS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: uiHidden ? 0 : 12, maxWidth: uiHidden ? undefined : 960, margin: '0 auto', height: uiHidden ? '100dvh' : undefined }}>
+          {!uiHidden && (
+            <>
+              <h1 style={{ margin: 0, fontSize: 24 }}>Baby Piano</h1>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <select value={instrument} onChange={(e) => setInstrument(e.target.value as Instrument)}>
+                  <option value="grand-piano">Grand Piano</option>
+                  <option value="toy-xylophone">Toy Xylophone</option>
                 </select>
-                <button onClick={restartSong}>Restart Song</button>
-              </>
-            )}
-          </div>
+                <button onClick={() => setMode('free-play')} style={{ fontWeight: mode === 'free-play' ? 700 : 400 }}>Free Play</button>
+                <button onClick={() => setMode('learn')} style={{ fontWeight: mode === 'learn' ? 700 : 400 }}>Learn Mode</button>
+                <button onClick={() => setMode('quiz')} style={{ fontWeight: mode === 'quiz' ? 700 : 400 }}>Quiz Mode</button>
+                {showSongControls && (
+                  <>
+                    <select value={songId} onChange={(e) => setSongId(e.target.value)}>
+                      {SONGS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                    </select>
+                    <button onClick={restartSong}>Restart Song</button>
+                  </>
+                )}
+              </div>
 
-          {showSongControls && (
-            <div style={{ fontSize: 14 }}>
-              {songComplete
-                ? `Great job! You completed ${song.label}.`
-                : mode === 'quiz'
-                  ? `Find the key: ${nextRequired}`
-                  : `Next key: ${nextRequired}`}
-            </div>
+              {showSongControls && (
+                <div style={{ fontSize: 14 }}>
+                  {songComplete
+                    ? `Great job! You completed ${song.label}.`
+                    : mode === 'quiz'
+                      ? `Find the key: ${nextRequired}`
+                      : `Next key: ${nextRequired}`}
+                </div>
+              )}
+            </>
           )}
 
-          <div style={{ position: 'relative', height: '58dvh', maxHeight: 380, minHeight: 220, userSelect: 'none', touchAction: 'none' }}>
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', borderRadius: 10, overflow: 'hidden', border: '2px solid #cbd5e1' }}>
+          <div data-piano-keyboard style={{ position: 'relative', height: uiHidden ? '100dvh' : '58dvh', maxHeight: uiHidden ? undefined : 380, minHeight: 220, userSelect: 'none', touchAction: 'none', flex: uiHidden ? 1 : undefined }}>
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', borderRadius: uiHidden ? 0 : 10, overflow: 'hidden', border: uiHidden ? 'none' : '2px solid #cbd5e1' }}>
               {KEYS.filter((key) => key.type === 'white').map((key) => {
                 const active = activeNotes.has(key.note)
                 return (
