@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { SONGS, isCorrectLearnNote, plainNote } from '@/lib/piano'
+import { BUILT_IN_SONGS, isCorrectLearnNote, plainNote } from '@/lib/piano'
 
 describe('piano domain data', () => {
   it('contains both required lullabies', () => {
-    const names = SONGS.map((song) => song.label)
+    const names = BUILT_IN_SONGS.map((song) => song.label)
     expect(names).toContain('Twinkle Twinkle Little Star')
     expect(names).toContain('Mary Had a Little Lamb')
   })
