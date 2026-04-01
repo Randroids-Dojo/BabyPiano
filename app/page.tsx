@@ -5,7 +5,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { UpdateBanner } from '@/components/UpdateBanner'
 import { useVersionUpgradeNotification } from '@/hooks/useVersionUpgradeNotification'
 
-import { SONGS, isCorrectLearnNote, plainNote, type Instrument, type Mode } from '@/lib/piano'
+import {
+  BUILT_IN_SONGS,
+  isCorrectLearnNote,
+  plainNote,
+  loadRecordings,
+  saveRecording,
+  deleteRecording,
+  type Instrument,
+  type Mode,
+  type RecordedNote,
+  type Song,
+} from '@/lib/piano'
 
 type PlayingVoice = {
   stop: () => void
@@ -46,7 +57,7 @@ export default function HomePage() {
   const versionStale = useVersionUpgradeNotification()
   const [instrument, setInstrument] = useState<Instrument>('grand-piano')
   const [mode, setMode] = useState<Mode>('free-play')
-  const [songId, setSongId] = useState<string>(SONGS[0].id)
+  const [songId, setSongId] = useState<string>(BUILT_IN_SONGS[0].id)
   const [stepIndex, setStepIndex] = useState(0)
   const [songComplete, setSongComplete] = useState(false)
   const [activeNotes, setActiveNotes] = useState<Set<string>>(new Set())
@@ -54,13 +65,27 @@ export default function HomePage() {
   const [wrongNotes, setWrongNotes] = useState<Set<string>>(new Set())
   const [uiHidden, setUiHidden] = useState(false)
 
+  // Recording state
+  const [isRecording, setIsRecording] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [customSongs, setCustomSongs] = useState<Song[]>([])
+  const recordingRef = useRef<RecordedNote[]>([])
+  const recordStartRef = useRef<number>(0)
+  const playbackTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
+
   const audioContextRef = useRef<AudioContext | null>(null)
   const voicesRef = useRef<Map<string, PlayingVoice[]>>(new Map())
   const pointerMapRef = useRef<Map<number, string>>(new Map())
   const wrongTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const song = useMemo(() => SONGS.find((item) => item.id === songId) ?? SONGS[0], [songId])
+  // Load custom songs from localStorage on mount
+  useEffect(() => {
+    setCustomSongs(loadRecordings())
+  }, [])
+
+  const allSongs = useMemo(() => [...BUILT_IN_SONGS, ...customSongs], [customSongs])
+  const song = useMemo(() => allSongs.find((item) => item.id === songId) ?? BUILT_IN_SONGS[0], [allSongs, songId])
   const isLearning = (mode === 'learn' || mode === 'quiz') && !songComplete
   const nextRequired = isLearning ? song.notes[stepIndex] : null
 
@@ -179,7 +204,96 @@ export default function HomePage() {
     wrongTimersRef.current.set(note, timer)
   }, [])
 
+  // Recording controls
+  const startRecording = useCallback(() => {
+    recordingRef.current = []
+    recordStartRef.current = Date.now()
+    setIsRecording(true)
+  }, [])
+
+  const stopRecording = useCallback(() => {
+    setIsRecording(false)
+    const recorded = recordingRef.current
+    if (recorded.length < 2) return // need at least 2 notes
+
+    const id = `recording-${Date.now()}`
+    const notes = recorded.map((r) => plainNote(r.note))
+    const newSong: Song = {
+      id,
+      label: `My Song ${customSongs.length + 1}`,
+      notes,
+      recording: recorded,
+      custom: true,
+    }
+    saveRecording(newSong)
+    setCustomSongs(loadRecordings())
+    setSongId(id)
+    setMode('free-play')
+  }, [customSongs.length])
+
+  const handleDeleteRecording = useCallback((id: string) => {
+    deleteRecording(id)
+    setCustomSongs(loadRecordings())
+    if (songId === id) {
+      setSongId(BUILT_IN_SONGS[0].id)
+    }
+  }, [songId])
+
+  // Playback
+  const stopPlayback = useCallback(() => {
+    playbackTimersRef.current.forEach(clearTimeout)
+    playbackTimersRef.current = []
+    setIsPlaying(false)
+    setActiveNotes(new Set())
+  }, [])
+
+  const startPlayback = useCallback(() => {
+    const currentSong = allSongs.find((s) => s.id === songId)
+    if (!currentSong?.recording) return
+
+    stopPlayback()
+    setIsPlaying(true)
+
+    const timers: ReturnType<typeof setTimeout>[] = []
+    currentSong.recording.forEach((entry) => {
+      const timer = setTimeout(() => {
+        playNote(entry.note)
+        setActiveNotes((prev) => new Set(prev).add(entry.note))
+        // Auto-release after 300ms
+        const releaseTimer = setTimeout(() => {
+          stopNote(entry.note)
+          setActiveNotes((prev) => {
+            const next = new Set(prev)
+            next.delete(entry.note)
+            return next
+          })
+        }, 300)
+        timers.push(releaseTimer)
+      }, entry.time)
+      timers.push(timer)
+    })
+
+    // End playback after last note + 500ms
+    const lastTime = currentSong.recording[currentSong.recording.length - 1].time
+    const endTimer = setTimeout(() => {
+      setIsPlaying(false)
+      setActiveNotes(new Set())
+    }, lastTime + 500)
+    timers.push(endTimer)
+
+    playbackTimersRef.current = timers
+  }, [allSongs, songId, playNote, stopNote, stopPlayback])
+
+  // Clean up playback timers on unmount
+  useEffect(() => {
+    return () => {
+      playbackTimersRef.current.forEach(clearTimeout)
+    }
+  }, [])
+
   const handleNoteDown = useCallback((note: string, pointerId: number) => {
+    if (isPlaying) return // don't interfere with playback
+
     resetIdleTimer()
     void getAudioContext().resume()
 
@@ -190,6 +304,14 @@ export default function HomePage() {
 
     pointerMapRef.current.set(pointerId, note)
     setActiveNotes((prev) => new Set(prev).add(note))
+
+    // Record the note if recording
+    if (isRecording) {
+      recordingRef.current.push({
+        note,
+        time: Date.now() - recordStartRef.current,
+      })
+    }
 
     if (mode === 'quiz' && nextRequired) {
       if (isCorrectLearnNote(note, nextRequired)) {
@@ -217,7 +339,7 @@ export default function HomePage() {
         }
       }
     }
-  }, [resetIdleTimer, getAudioContext, mode, nextRequired, playNote, playErrorSfx, flashWrong, song.notes.length, stepIndex, stopNote])
+  }, [isPlaying, isRecording, resetIdleTimer, getAudioContext, mode, nextRequired, playNote, playErrorSfx, flashWrong, song.notes.length, stepIndex, stopNote])
 
   const handlePointerRelease = useCallback((pointerId: number) => {
     const note = pointerMapRef.current.get(pointerId)
@@ -243,6 +365,7 @@ export default function HomePage() {
   }, [songId, restartSong])
 
   const showSongControls = mode === 'learn' || mode === 'quiz'
+  const currentSongHasRecording = song.recording != null
 
   const getWhiteKeyBg = (note: string, active: boolean) => {
     if (wrongNotes.has(note)) return '#fca5a5'
@@ -262,7 +385,6 @@ export default function HomePage() {
     <main
       style={{ minHeight: '100dvh', background: '#0f172a', color: '#e2e8f0', padding: uiHidden ? 0 : 12 }}
       onPointerDown={uiHidden ? (e) => {
-        // If tapping outside the keyboard area, show UI
         const target = e.target as HTMLElement
         if (!target.closest('[data-piano-keyboard]')) {
           resetIdleTimer()
@@ -280,7 +402,7 @@ export default function HomePage() {
           {!uiHidden && (
             <>
               <h1 style={{ margin: 0, fontSize: 24 }}>Baby Piano</h1>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 <select value={instrument} onChange={(e) => setInstrument(e.target.value as Instrument)}>
                   <option value="grand-piano">Grand Piano</option>
                   <option value="toy-xylophone">Toy Xylophone</option>
@@ -291,10 +413,78 @@ export default function HomePage() {
                 {showSongControls && (
                   <>
                     <select value={songId} onChange={(e) => setSongId(e.target.value)}>
-                      {SONGS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                      <optgroup label="Built-in Songs">
+                        {BUILT_IN_SONGS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                      </optgroup>
+                      {customSongs.length > 0 && (
+                        <optgroup label="My Recordings">
+                          {customSongs.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                        </optgroup>
+                      )}
                     </select>
                     <button onClick={restartSong}>Restart Song</button>
+                    {song.custom && (
+                      <button
+                        onClick={() => handleDeleteRecording(song.id)}
+                        style={{ color: '#fca5a5', fontSize: 12 }}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </>
+                )}
+              </div>
+
+              {/* Recording & Playback controls */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {mode === 'free-play' && !isPlaying && (
+                  <button
+                    onClick={isRecording ? stopRecording : startRecording}
+                    style={{
+                      background: isRecording ? '#ef4444' : '#1e293b',
+                      color: '#e2e8f0',
+                      border: isRecording ? '2px solid #f87171' : '1px solid #475569',
+                      borderRadius: 20,
+                      padding: '4px 14px',
+                      fontSize: 14,
+                      fontWeight: isRecording ? 700 : 400,
+                      animation: isRecording ? 'pulse 1.5s infinite' : undefined,
+                    }}
+                  >
+                    {isRecording ? '⏹ Stop & Save' : '⏺ Record'}
+                  </button>
+                )}
+                {mode === 'free-play' && currentSongHasRecording && !isRecording && (
+                  <button
+                    onClick={isPlaying ? stopPlayback : startPlayback}
+                    style={{
+                      background: isPlaying ? '#f59e0b' : '#1e293b',
+                      color: '#e2e8f0',
+                      border: '1px solid #475569',
+                      borderRadius: 20,
+                      padding: '4px 14px',
+                      fontSize: 14,
+                    }}
+                  >
+                    {isPlaying ? '⏹ Stop' : '▶ Play Back'}
+                  </button>
+                )}
+                {mode === 'free-play' && !isRecording && !isPlaying && customSongs.length > 0 && (
+                  <select
+                    value={songId}
+                    onChange={(e) => setSongId(e.target.value)}
+                    style={{ fontSize: 13 }}
+                  >
+                    <option value="">Select a recording...</option>
+                    {customSongs.map((item) => (
+                      <option key={item.id} value={item.id}>{item.label}</option>
+                    ))}
+                  </select>
+                )}
+                {isRecording && (
+                  <span style={{ fontSize: 13, color: '#f87171' }}>
+                    Recording... play some notes!
+                  </span>
                 )}
               </div>
 
@@ -370,6 +560,13 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.7; }
+        }
+      `}</style>
     </main>
   )
 }
